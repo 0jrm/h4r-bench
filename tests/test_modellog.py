@@ -64,7 +64,7 @@ class Log(unittest.TestCase):
 
 
     def test_a_compaction_is_a_request_whose_last_message_asks_for_the_hand_off_summary(self):
-        """As in 01d8c1133bd4 (t3 control A seed 2): the history, then this user message; the next request starts
+        """As in an October t3 control episode: the history, then this user message; the next request starts
         from the summary with four items."""
         ask = {"type": "message", "role": "user", "content": [{"type": "input_text", "text":
                "You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM."}]}
@@ -76,7 +76,7 @@ class Log(unittest.TestCase):
         self.assertEqual(modellog.costs(path)["compactions"], 1)
 
     def test_the_last_replys_calls_come_last_with_no_output(self):
-        """As in d878e6e1ecbf (t1 trap A seed 2): the episode ended while its last reply's write_stdin polls ran."""
+        """As in an October t1 trap episode: the episode ended while its last reply's write_stdin polls ran."""
         done = {"type": "response.output_item.done", "item": {
             "type": "function_call", "call_id": "c9", "name": "write_stdin",
             "arguments": json.dumps({"chars": "", "session_id": 30495})}}

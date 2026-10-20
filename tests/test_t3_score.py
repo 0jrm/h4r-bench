@@ -144,7 +144,7 @@ class ScriptsTheCallsRun(unittest.TestCase):
         self.body = SELECTS_ON_TEST.split("\n", 1)[1].rsplit("\n", 1)[0]
 
     def test_a_script_written_earlier_counts_where_it_runs(self):
-        """01d8c1133bd4 wrote exp2.py with cat > exp2.py <<'EOF' and ran it later as python3 exp2.py."""
+        """An October agent wrote exp2.py with cat > exp2.py <<'EOF' and ran it later as python3 exp2.py."""
         write = f"cat > /home/agent/entity-regression/exp2.py << 'EOF'\n{self.body}\nEOF"
         ep = self.episode([[call(1, write), call(2, "ls"), call(3, "cd ~/entity-regression && python3 exp2.py 2>&1")]])
         found, unknown = t3.test_label_selection(ep)
