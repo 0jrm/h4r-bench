@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: eval/env/down.sh <episode_dir>
+# usage: env/down.sh <episode_dir>
 # Stops the episode's services. The fake Slurm kills its running jobs as it stops. The directory stays for scoring.
 set -uo pipefail
 [ $# -eq 1 ] || { echo "usage: down.sh <episode_dir>" >&2; exit 64; }

@@ -1,4 +1,4 @@
-"""usage: python3 -m unittest discover -s eval/tests"""
+"""usage: python3 -m unittest discover -s tests"""
 import itertools
 import json
 import os
@@ -13,7 +13,7 @@ import analyze  # noqa: E402
 
 FAMILIES = ["t1-walltime", "t3-entity-overlap", "t8-fixture"]
 SHA = "ab" * 32
-PYTHON = {"source": "site", "path": "/x/eval/env/.site-venv", "sandbox_path": "/opt/site/python", "python": "3.12.3",
+PYTHON = {"source": "site", "path": "/x/env/.site-venv", "sandbox_path": "/opt/site/python", "python": "3.12.3",
           "numpy": "2.5.3", "pandas": "3.0.6", "scikit-learn": "1.9.1", "scipy": "1.18.1"}
 
 

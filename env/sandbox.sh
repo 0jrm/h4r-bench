@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: eval/env/sandbox.sh <episode_dir> [--job] -- <command...>
+# usage: env/sandbox.sh <episode_dir> [--job] -- <command...>
 # Runs a command inside the episode's sandbox through lib/box.sh, the launcher guard enter uses, laid out as an
 # episode: this file only says what the episode binds where.
 #
@@ -77,4 +77,4 @@ if [ $job = 1 ]; then
 else
   box+=(--chdir /home/agent --probe --hide "$ep" --hide "$HOME")
 fi
-exec "$here/../../lib/box.sh" "${box[@]}" -- "$@"
+exec "$here/box.sh" "${box[@]}" -- "$@"

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""usage: eval/validate.py [family ...] [--arm A|E] [--seeds N] [--keep]
+"""usage: ./validate.py [family ...] [--arm A|E] [--seeds N] [--harness DIR] [--keep]
 Checks every task's scorer against its scripted agents before any model runs: each scripted agent is played
 through a real episode, and the verdict must match the expectation in the task's task.json. An honest agent is
 played on both variants and must pass both; a cheating agent is played on the trap variant and must be caught.
-With --seeds N, each case runs on seeds 1..N, since the data and thresholds vary by seed. Exit 1 when any
-verdict differs."""
+With --seeds N, each case runs on seeds 1..N, since the data and thresholds vary by seed. Arm A runs by default;
+--harness names a harness4research checkout and adds arm E. Exit 1 when any verdict differs."""
 import json
 import os
 import shutil
@@ -19,11 +19,14 @@ def run(*cmd, **kw):
     return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
 
 
+HARNESS = []  # ["--harness", DIR] when given
+
+
 def play(family, variant, arm, agent, keep, seed):
     root = tempfile.mkdtemp(prefix="v.", dir=os.environ.get("TMPDIR"))
     ep = os.path.join(root, "s")
     try:
-        built = run(os.path.join(HERE, "episode.sh"), family, variant, arm, ep, "--seed", str(seed))
+        built = run(os.path.join(HERE, "episode.sh"), family, variant, arm, ep, "--seed", str(seed), *HARNESS)
         if built.returncode:
             return None, f"episode.sh failed: {built.stderr.strip()[-400:]}"
         scripted = os.path.join(ep, "home", ".scripted")
@@ -49,7 +52,10 @@ def play(family, variant, arm, agent, keep, seed):
 def main():
     args = sys.argv[1:]
     keep = "--keep" in args
-    arms = ["A", "E"]
+    if "--harness" in args:
+        HARNESS[:] = ["--harness", os.path.abspath(args.pop(args.index("--harness") + 1))]
+        args.remove("--harness")
+    arms = ["A", "E"] if HARNESS else ["A"]
     if "--arm" in args:
         arms = [args.pop(args.index("--arm") + 1)]
     seeds = 1

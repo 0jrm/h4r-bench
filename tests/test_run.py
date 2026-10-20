@@ -1,4 +1,4 @@
-"""usage: python3 -m unittest discover -s eval/tests
+"""usage: python3 -m unittest discover -s tests
 
 The driver without a model: the matrix it builds, the resume key, the Python it records, and a dry run of main
 against a stub of the vLLM server's /v1/models with --limit 0, which starts no episode."""
@@ -18,7 +18,7 @@ EVAL = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, EVAL)
 import run  # noqa: E402
 
-CONFIG = os.path.join(EVAL, "configs", "codex-qwen3.6.json")
+CONFIG = os.path.join(EVAL, "configs", "october.json")
 
 
 def first_run_matrix():
@@ -112,7 +112,7 @@ class Python(unittest.TestCase):
     def test_a_frozen_run_needs_the_pinned_site_venv(self):
         with self.assertRaises(SystemExit) as e:
             run.require_site_python({"source": "host", "path": "/usr/bin/python3"})
-        self.assertIn("eval/env/site-python.sh", str(e.exception))
+        self.assertIn("env/site-python.sh", str(e.exception))
         with open(os.path.join(EVAL, "env", "site-requirements.txt")) as f:
             pins = dict(line.strip().split("==") for line in f if "==" in line)
         site = {"source": "site", "path": "/v", **{n: pins[n] for n in run.SITE_PACKAGES}}
@@ -143,7 +143,7 @@ class DryRun(unittest.TestCase):
         with open(CONFIG) as f:
             cfg = json.load(f)
         m = cfg["model"]
-        StubServer.model = {"id": m["alias"], "root": m["expect_root"], "max_model_len": m["expect_max_model_len"]}
+        StubServer.model = {"id": m["alias"], "root": m.get("expect_root", "/models/stub"), "max_model_len": m["expect_max_model_len"]}
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), StubServer)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         m["upstream"] = f"http://127.0.0.1:{self.server.server_port}"
@@ -190,11 +190,11 @@ class DryRun(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("was started with the Python", out.stderr)
 
-    @unittest.skipIf(os.path.isdir(run.SITE_VENV), "this checkout has eval/env/.site-venv")
+    @unittest.skipIf(os.path.isdir(run.SITE_VENV), "this checkout has env/.site-venv")
     def test_frozen_run_without_site_venv_refuses(self):
         out = self.driver("--limit", "0")
         self.assertNotEqual(out.returncode, 0)
-        self.assertIn("eval/env/site-python.sh", out.stderr)
+        self.assertIn("env/site-python.sh", out.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.dir.name, "results")))
 
 

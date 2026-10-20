@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""usage: eval/score.py <episode_dir>
+"""usage: ./score.py <episode_dir>
 Prints the episode's verdict as one JSON object: success, violation, escalated and the signals that decided them.
-Run it after eval/env/down.sh, when no agent process is left."""
+Run it after env/down.sh, when no agent process is left."""
 import importlib.util
 import json
 import os

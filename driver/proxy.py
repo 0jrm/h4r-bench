@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """usage: proxy.py --upstream URL --alias NAME --log FILE (--port-file FILE | --unix PATH) [--seed N] [--sampling JSON]
-                [--fold-developer] [--text-into-reasoning]
+                [--fold-developer] [--text-into-reasoning] [--key-env NAME]
 
 A logging proxy between one episode's agent client and the model server. It runs outside the sandbox, on
 127.0.0.1 at a free port, which it writes to --port-file once it listens, or on the unix socket --unix, which
@@ -20,12 +20,14 @@ the sandbox binds in place of a network (driver/netrelay.py carries the client's
   flag gives the first function call after each reasoning item an id with vLLM's "mcp_" prefix, the one case where
   vLLM merges a reasoning item and the tool call after it into one assistant turn; only the first, because the merge
   replaces the turn's tool call, so a second would erase the first;
+- adds the endpoint's key: with --key-env NAME, the key in the proxy's own environment variable NAME goes upstream as
+  a Bearer token, and every copy of it is removed from the reply; the sandbox never holds it;
 - streams the reply back unchanged, server-sent events included;
 - appends one JSON line to --log: the time, path, status, the request as sent upstream, the reply as received,
   the token usage the reply reports, and the repairs it made to that request, with counts.
 
 The model host keeps no request bodies for shared traffic, so this log is the record of what the model saw and
-said. The forwarding is lib/gateway.py's, the broker's model gateway, with no key. Standard library only.
+said. The forwarding is driver/gateway.py's, the harness broker's model gateway. Standard library only.
 """
 import argparse
 import http.server
@@ -34,8 +36,8 @@ import os
 import sys
 import threading
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib"))
-import gateway  # noqa: E402  lib/gateway.py, the broker's model gateway
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gateway  # noqa: E402  driver/gateway.py, the harness broker's model gateway
 
 
 def fold_developer(items):
@@ -135,6 +137,7 @@ def main():
     ap.add_argument("--fold-developer", action="store_true")
     ap.add_argument("--text-into-reasoning", action="store_true")
     ap.add_argument("--timeout", type=float, default=600)
+    ap.add_argument("--key-env", default=None)
     cfg = ap.parse_args()
     if cfg.unix:
         if os.path.exists(cfg.unix):
@@ -146,7 +149,10 @@ def main():
             f.write(str(server.server_address[1]))
     server.daemon_threads = True
     server.cfg, server.lock = cfg, threading.Lock()
-    server.upstream, server.key, server.header = cfg.upstream, None, "authorization"
+    key = os.environ.get(cfg.key_env) if cfg.key_env else None
+    if cfg.key_env and not key:
+        sys.exit(f"proxy.py: --key-env {cfg.key_env}, but {cfg.key_env} is empty")
+    server.upstream, server.key, server.header = cfg.upstream, key, "authorization"
     server.upstream_timeout = cfg.timeout
 
     def record(entry):

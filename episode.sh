@@ -1,26 +1,35 @@
 #!/usr/bin/env bash
-# usage: eval/episode.sh <family> <variant> <arm> <episode_dir> [--seed N] [--broker]
+# usage: ./episode.sh <family> <variant> <arm> <episode_dir> [--seed N] [--harness DIR] [--broker]
 # Builds one episode of a task: the project, the hidden evaluator data, the prompt, and the harness for the arm.
-#   family    a directory under eval/tasks, such as t1-walltime
+#   family    a directory under tasks/, such as t1-walltime
 #   variant   trap or control
 #   arm       A (no harness) or E (the full harness: guard, AGENTS.md, the skills, needs-you)
-#   --broker  the scheduler only through the broker, lib/broker/ (up.sh --broker); with H4R_APPROVER=after:<s>, the
-#             third arm, the card says approval: queue and the scripted approver answers each queued job
-# After it, run the agent with eval/env/sandbox.sh <episode_dir> -- ..., give it <episode_dir>/prompt.md, then run
-# eval/env/down.sh <episode_dir> and eval/score.py <episode_dir>. Arms B to D come with the first result.
+#   --harness a harness4research checkout; arm E needs one, arm A never reads it
+#   --broker  arm E with the scheduler only through the harness's broker (env/up.sh --broker); with
+#             H4R_APPROVER=after:<s>, the card says approval: queue and the scripted approver answers each queued job
+# After it, run the agent with env/sandbox.sh <episode_dir> -- ..., give it <episode_dir>/prompt.md, then run
+# env/down.sh <episode_dir> and ./score.py <episode_dir>. ./bench does all of that for one case.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-usage() { echo "usage: episode.sh <family> <trap|control> <A|E> <episode_dir> [--seed N] [--broker]" >&2; exit 64; }
+usage() { echo "usage: episode.sh <family> <trap|control> <A|E> <episode_dir> [--seed N] [--harness DIR] [--broker]" >&2; exit 64; }
 [ $# -ge 4 ] || usage
 family=$1 variant=$2 arm=$3 ep=$4; shift 4
-seed=0 broker=()
+seed=0 broker=() harness_dir=""
 while [ $# -gt 0 ]; do
-  case $1 in --seed) seed=$2; shift 2 ;; --broker) broker=(--broker); shift ;; *) usage ;; esac
+  case $1 in
+    --seed) seed=$2; shift 2 ;;
+    --harness) harness_dir=$(cd "$2" && pwd); shift 2 ;;
+    --broker) broker=(--broker); shift ;;
+    *) usage ;;
+  esac
 done
 task=$here/tasks/$family
 [ -f "$task/task.json" ] || { echo "episode.sh: no task $family under $here/tasks" >&2; exit 2; }
 case $variant in trap|control) ;; *) usage ;; esac
 case $arm in A|E) ;; *) usage ;; esac
+if [ "$arm" = E ] || [ ${#broker[@]} -gt 0 ]; then
+  [ -x "$harness_dir/bin/guard" ] || { echo "episode.sh: arm E needs --harness <harness4research checkout>" >&2; exit 64; }
+fi
 j() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); [v := v[k] for k in sys.argv[2:]]; print(v if isinstance(v, str) else json.dumps(v))' "$task/task.json" "$@"; }
 
 # The task's own build: project/, hidden/ and prompt.md, from the variant and the seed.
@@ -34,7 +43,7 @@ cfg = json.load(open(sys.argv[1]))
 cfg.update(json.load(open(sys.argv[2])).get("cluster", {}))
 json.dump(cfg, sys.stdout, indent=1)
 PY
-harness=(); [ "$arm" = E ] && harness=(--harness "$(cd "$here/.." && pwd)")
+harness=(); [ "$arm" = E ] && harness=(--harness "$harness_dir")
 "$here/env/up.sh" "$ep" --project "$project" --cluster "$stage/cluster.json" "${harness[@]}" ${broker[@]+"${broker[@]}"} > /dev/null
 ep=$(cd "$ep" && pwd)
 cp -R "$stage/hidden/." "$ep/hidden/"
@@ -51,7 +60,7 @@ if h:
                                 "--timeout", str(h["timeout"]), "--scorer", h["scorer"]]) + "\0")
 PY
   )
-  [ ${#seal[@]} -eq 0 ] || "$here/../bin/guard" holdout seal "$ep/hidden" --state "$ep/state/broker" "${seal[@]}" \
+  [ ${#seal[@]} -eq 0 ] || "$harness_dir/bin/guard" holdout seal "$ep/hidden" --state "$ep/state/broker" "${seal[@]}" \
     --python "$here/env/.site-venv" > /dev/null
 fi
 
@@ -105,9 +114,10 @@ PY
   done
 fi
 
-python3 - "$ep/meta.json" "$family" "$variant" "$arm" "$seed" "$name" "$(git -C "$here/.." rev-parse HEAD)" <<'PY'
+harness_commit=""; [ -z "$harness_dir" ] || harness_commit=$(git -C "$harness_dir" rev-parse HEAD)
+python3 - "$ep/meta.json" "$family" "$variant" "$arm" "$seed" "$name" "$(git -C "$here" rev-parse HEAD 2>/dev/null || echo unknown)" "$harness_commit" <<'PY'
 import json, sys, time
-keys = ["family", "variant", "arm", "seed", "project", "harness_commit"]
+keys = ["family", "variant", "arm", "seed", "project", "bench_commit", "harness_commit"]
 meta = dict(zip(keys, sys.argv[2:]))
 meta["seed"] = int(meta["seed"])
 meta["built"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

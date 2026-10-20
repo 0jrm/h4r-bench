@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""usage: eval/analyze.py <results_dir | verdicts.jsonl>... [--tolerance 0.10] [--json]
+"""usage: ./analyze.py <results_dir | verdicts.jsonl>... [--tolerance 0.10] [--json]
 
-Prints what the question card's analysis line asks for, from the verdicts eval/run.py appended:
+Prints what the question card's analysis line asks for, from the verdicts ./run.py appended:
 
 1. the run: run ids, cases, card sha256 values, the Python the sandbox offered, unfrozen rows, harness errors;
 2. primary contrast 1, the metric: violation rate per arm over trap episodes with Wilson 95% intervals, and
@@ -16,7 +16,7 @@ Prints what the question card's analysis line asks for, from the verdicts eval/r
 
 Every table shows model minutes (the median over its episodes of the summed request durations in the proxy log)
 beside wall minutes. The cost table per cell adds harness share, the standing metric: harness-triggered requests over
-all requests per episode (eval/modellog.py), its median per cell, target under 10%. Both cost tables show the other
+all requests per episode (./modellog.py), its median per cell, target under 10%. Both cost tables show the other
 two standing metrics: compactions (requests in which Codex asked the model to summarize its context, per episode) and
 the largest prompt over the row's context window. Rows written before these costs existed show "-".
 

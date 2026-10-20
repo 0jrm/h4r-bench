@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage: eval/run.py <config.json> [--limit N] [--unfrozen]
+"""usage: ./run.py <config.json> [--limit N] [--unfrozen]
 
 Runs the evaluation, scaffold.parallel episodes at a time (1 when absent). Each episode: build it, check the model,
 start the logging proxy, run the agent client in the sandbox with the task's prompt, stop everything, score it.
@@ -8,13 +8,13 @@ The config is the question card's machine part:
 
 {
   "run_id": "smoke-1",
-  "question_card": "eval/cards/first-qwen3.6.card",    frozen: committed once, unchanged, no <placeholder>
+  "question_card": "cards/first-qwen3.6.card",    frozen: committed once, unchanged, no <placeholder>
   "episodes_dir": "~/.cache/hpc-sessions",            episode directories, named at random so nothing in a path
                                                        names the task, arm or seed (the mount table shows paths)
   "approver": "never",                                optional: behind the broker, never (the default) or after:<seconds>,
                                                        the scripted approver of eval/broker/approver.py: the third arm's
                                                        after:300 answers every queued ask and job after five minutes
-  "results_dir": "eval/results/smoke-1",              verdicts.jsonl
+  "results_dir": "results/smoke-1",              verdicts.jsonl
   "model": {"upstream": "http://127.0.0.1:9090",      the model host's relay
             "alias": "default-model",                 the name the proxy pins every request to
             "expect_upstream_model": "gemma4-26B-mtp", the run stops if the alias serves anything else
@@ -41,8 +41,8 @@ Before the first episode it checks the question card, refuses one that is not fr
 results_dir with the card's sha256 and commit, the harness commit and the config; a resumed run must match it.
 --unfrozen skips the check for a smoke run and says so in run.json and in every verdict.
 
-A frozen run also refuses to start without eval/env/.site-venv (built by eval/env/site-python.sh), or with one whose
-numpy, pandas, scikit-learn or scipy differ from eval/env/site-requirements.txt. run.json and every verdict record
+A frozen run also refuses to start without env/.site-venv (built by env/site-python.sh), or with one whose
+numpy, pandas, scikit-learn or scipy differ from env/site-requirements.txt. run.json and every verdict record
 the Python the sandbox offered as "python": the venv's path and those versions, or, with no venv (an --unfrozen run
 only), "source": "host" with the host python3's versions. A resumed run must offer the same.
 
@@ -61,12 +61,12 @@ the driver there. run.json and every verdict record what it saw: served, and ser
 when they were read.
 
 When the model check fails, or the card's kill criterion trips (from 10 outcomes on, more than 20% client errors or
-time-outs with no tool call, as eval/analyze.py counts them), the run submits no new episode, records the running
+time-outs with no tool call, as ./analyze.py counts them), the run submits no new episode, records the running
 ones as they finish, and exits 2.
 An interrupt (Ctrl-C, SIGTERM or SIGHUP) does the same and exits 130; a second one quits at once, leaving the
 running episodes unrecorded and their processes alive.
 
-Each verdict line holds the scorer's verdict plus the costs (eval/modellog.py): requests, input and output tokens,
+Each verdict line holds the scorer's verdict plus the costs (./modellog.py): requests, input and output tokens,
 the largest prompt, cached input tokens, model seconds, harness-triggered requests, compactions; then the
 scaffold's context window, wall seconds, the client's exit code, and whether the episode hit its time limit; and the
 case's arm, whether it ran behind the broker ("broker"), and the Python offered ("python").
@@ -116,7 +116,14 @@ def expand(path):
 
 
 def git(*args):
-    out = subprocess.run(["git", "-C", os.path.dirname(HERE), *args], capture_output=True, text=True)
+    out = subprocess.run(["git", "-C", HERE, *args], capture_output=True, text=True)
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def harness_commit(path):
+    if not path:
+        return None
+    out = subprocess.run(["git", "-C", expand(path), "rev-parse", "HEAD"], capture_output=True, text=True)
     return out.stdout.strip() if out.returncode == 0 else None
 
 
@@ -181,19 +188,19 @@ def offered_python(venv=SITE_VENV):
 def require_site_python(python, requirements=os.path.join(HERE, "env", "site-requirements.txt")):
     """Exits unless the sandbox offers the site venv with the pinned versions of SITE_PACKAGES."""
     if python["source"] != "site":
-        sys.exit("run.py: no eval/env/.site-venv; a frozen run offers the pinned Python: build it once on this "
-                 "machine with eval/env/site-python.sh, or pass --unfrozen for a smoke run")
+        sys.exit("run.py: no env/.site-venv; a frozen run offers the pinned Python: build it once on this "
+                 "machine with env/site-python.sh, or pass --unfrozen for a smoke run")
     with open(requirements) as f:
         pins = dict(line.strip().split("==", 1) for line in f if "==" in line)
     wrong = [f"{n} {python.get(n)} (pinned {pins.get(n)})" for n in SITE_PACKAGES if python.get(n) != pins.get(n)]
     if wrong:
-        sys.exit(f"run.py: {python['path']} offers {', '.join(wrong)}; remove it and rerun eval/env/site-python.sh")
+        sys.exit(f"run.py: {python['path']} offers {', '.join(wrong)}; remove it and rerun env/site-python.sh")
 
 
 def frozen_card(path):
     """The card's sha256 and the commit that froze it; exits with the reason when the card is not frozen."""
     path = os.path.abspath(path)
-    rel = os.path.relpath(path, os.path.dirname(HERE))
+    rel = os.path.relpath(path, HERE)
     if not os.path.isfile(path):
         sys.exit(f"run.py: no question card at {rel}")
     commits = (git("log", "--format=%H", "--", rel) or "").split()
@@ -220,8 +227,9 @@ class Served(NamedTuple):
         return {k: v for k, v in observed.items() if k == "served" or v is not None}
 
 
-def get_json(url):
-    with urllib.request.urlopen(url, timeout=30) as r:
+def get_json(url, key=None):
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
         return json.load(r)
 
 
@@ -231,8 +239,9 @@ def model_check(model):
     Through a relay, expect_root or expect_max_model_len makes the check also read the vLLM server behind the
     alias, found through the relay's /admin/endpoints; a failed lookup is a mismatch."""
     upstream, alias = model["upstream"].rstrip("/"), model["alias"]
+    key = os.environ.get(model["api_key_env"]) if model.get("api_key_env") else None
     try:
-        listing = get_json(upstream + "/v1/models")
+        listing = get_json(upstream + "/v1/models", key)
     except (OSError, ValueError) as e:
         return Served(None, mismatch=f"{alias} unreachable ({e})")
     entry = next((m for m in listing.get("data", []) if m.get("id") == alias), {})
@@ -322,9 +331,10 @@ def run_episode(cfg, ep, family, variant, arm, seed):
     env = dict(os.environ)
     if ARMS[arm].broker:
         env["H4R_APPROVER"] = cfg.get("approver", "never")
+    harness = ["--harness", expand(cfg["harness"])] if cfg.get("harness") else []
     built = subprocess.run([os.path.join(HERE, "episode.sh"), family, variant, ARMS[arm].harness, ep, "--seed",
-                            str(seed)] + (["--broker"] if ARMS[arm].broker else []), capture_output=True, text=True,
-                           env=env)
+                            str(seed)] + harness + (["--broker"] if ARMS[arm].broker else []), capture_output=True,
+                           text=True, env=env)
     if built.returncode:
         subprocess.run([os.path.join(HERE, "env", "down.sh"), ep])
         return {"episode": ep, "error": "episode.sh: " + built.stderr.strip()[-300:]}
@@ -345,7 +355,8 @@ def run_episode(cfg, ep, family, variant, arm, seed):
                               "--alias", model["alias"], "--seed", str(model["seed_base"] + seed), "--log", log,
                               "--unix", sock, "--sampling", json.dumps(model.get("sampling", {}))]
                              + (["--fold-developer"] if model.get("fold_developer") else [])
-                             + (["--text-into-reasoning"] if model.get("text_into_reasoning") else []),
+                             + (["--text-into-reasoning"] if model.get("text_into_reasoning") else [])
+                             + (["--key-env", model["api_key_env"]] if model.get("api_key_env") else []),
                              start_new_session=True)
     for _ in range(200):
         if os.path.exists(sock):
@@ -437,6 +448,10 @@ def main():
     unfrozen = "--unfrozen" in args
     card_sha = card_commit = None
     every = matrix_cases(cfg["matrix"])
+    needs_harness = [a for a in cfg["matrix"]["arms"] if ARMS.get(a, ARMS["A"]).harness == "E"]
+    if needs_harness and not cfg.get("harness"):
+        sys.exit(f"run.py: arm {', '.join(needs_harness)} needs \"harness\": a harness4research checkout; "
+                 "arm A needs none")
     if not re.fullmatch(r"never|after:[0-9]+", cfg.get("approver", "never")):
         sys.exit(f"run.py: approver {cfg['approver']!r} is never or after:<seconds>")
     python = offered_python()
@@ -458,7 +473,8 @@ def main():
     else:
         with open(run_json, "w") as f:
             json.dump({"run_id": cfg["run_id"], "question_card": cfg.get("question_card"), "card_sha256": card_sha,
-                       "card_commit": card_commit, "unfrozen": unfrozen, "harness_commit": git("rev-parse", "HEAD"),
+                       "card_commit": card_commit, "unfrozen": unfrozen, "bench_commit": git("rev-parse", "HEAD"),
+                       "harness_commit": harness_commit(cfg.get("harness")),
                        "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **served.record(),
                        "python": python, "arms": {a: ARMS[a]._asdict() for a in cfg["matrix"]["arms"]},
                        "config": cfg}, f, indent=1)

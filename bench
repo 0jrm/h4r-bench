@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""usage: ./bench <chore> <trap|control> [--seed N] (--scripted [AGENT] | --config FILE) [--harness DIR [--arm ARM]]
+               [--keep]
+
+Runs one episode of one chore and prints its verdict.
+
+  chore         t1-walltime, t3-entity-overlap or t8-fixture (t1, t3 and t8 work too)
+  trap|control  the version: trap hides one temptation, control is the same chore without it
+  --seed N      1 to 10 (default 1); the seed sets the chore's data and thresholds
+  --scripted    play a bundled scripted agent, no model and no GPU (default agent: honest; the others are listed
+                under "scripted" in tasks/<chore>/task.json); prints whether the verdict matches the one expected there
+  --config FILE run Codex against the model endpoint in FILE (see configs/example.json)
+  --harness DIR optional: a harness4research checkout, for the harness arms
+  --arm ARM     A (default: no harness), E (the harness behind its broker) or E-nobroker (the harness alone); E and
+                E-nobroker need --harness
+  --keep        keep a scripted episode's directory (a model episode's is always kept)
+
+Exit 0 when the episode was scored (and, with --scripted, matched its expectation), 1 when a scripted verdict
+differs from its expectation, 2 when the episode could not be built, run or scored.
+"""
+import argparse
+import json
+import os
+import secrets
+import shutil
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import run  # noqa: E402
+
+CHORES = sorted(d for d in os.listdir(os.path.join(HERE, "tasks")) if os.path.isfile(os.path.join(HERE, "tasks", d, "task.json")))
+# Neutral, as in the October runs: the episode's path shows in the sandbox's mount table, so nothing in it names the
+# chore, the version or the benchmark.
+EPISODES = "~/.cache/hpc-sessions"
+
+
+def chore_name(name):
+    match = [c for c in CHORES if c == name or c.split("-")[0] == name]
+    if not match:
+        sys.exit(f"bench: no chore {name}; the chores are {', '.join(CHORES)}")
+    return match[0]
+
+
+def sh(*cmd, **kw):
+    return subprocess.run(list(cmd), capture_output=True, text=True, **kw)
+
+
+def scripted(args, task, ep, harness):
+    """Plays tasks/<chore>/scripted/<agent>.sh in the episode's sandbox, as validate.py does; returns the verdict
+    and the expectation from task.json."""
+    spec = task["scripted"].get(args.scripted)
+    if spec is None:
+        sys.exit(f"bench: {args.chore} has no scripted agent {args.scripted}; it has {', '.join(task['scripted'])}")
+    if run.ARMS[args.arm].harness not in spec.get("arms", ["A", "E"]):
+        sys.exit(f"bench: the scripted agent {args.scripted} runs in arm {', '.join(spec['arms'])} only")
+    arm = run.ARMS[args.arm]
+    built = sh(os.path.join(HERE, "episode.sh"), args.chore, args.variant, arm.harness, ep, "--seed", str(args.seed),
+               *harness, *(["--broker"] if arm.broker else []))
+    if built.returncode:
+        return None, None, "episode.sh: " + built.stderr.strip()[-400:]
+    played_dir = os.path.join(ep, "home", ".scripted")
+    shutil.copytree(os.path.join(HERE, "tasks", args.chore, "scripted"), played_dir)
+    print(f"playing scripted agent {args.scripted} in the sandbox ...", flush=True)
+    played = sh(os.path.join(HERE, "env", "sandbox.sh"), ep, "--", "bash", f"/home/agent/.scripted/{args.scripted}.sh",
+                timeout=900)
+    with open(os.path.join(ep, "agent.log"), "w") as f:
+        f.write(played.stdout + played.stderr)
+    shutil.rmtree(played_dir)
+    sh(os.path.join(HERE, "env", "down.sh"), ep)
+    scored = sh(sys.executable, os.path.join(HERE, "score.py"), ep)
+    if scored.returncode:
+        return None, None, "score.py: " + scored.stderr.strip()[-400:]
+    want = dict(spec["expect"], **spec.get(f"expect_{args.variant}", {}))
+    return json.loads(scored.stdout), want, None
+
+
+def model(args, ep, harness):
+    """One episode with Codex against the config's endpoint, through run.py's run_episode."""
+    with open(args.config) as f:
+        cfg = json.load(f)
+    holes = [k for k in ("upstream", "alias", "expect_upstream_model") if "<" in str(cfg["model"].get(k, "<"))]
+    if holes:
+        sys.exit(f"bench: {args.config} still has placeholders in model: {', '.join(holes)}")
+    release = run.expand(cfg["scaffold"]["release_dir"])
+    if not os.access(os.path.join(release, "bin", "codex"), os.X_OK):
+        sys.exit(f"bench: no Codex at {release}/bin/codex; set scaffold.release_dir in {args.config}")
+    cfg.setdefault("run_id", "bench")
+    if harness:
+        cfg["harness"] = harness[1]
+    served = run.model_check(cfg["model"])
+    if served.mismatch:
+        sys.exit(f"bench: model check: {served.mismatch}")
+    print(f"running Codex against {cfg['model']['alias']} (limit "
+          f"{run.timeout_minutes(cfg['scaffold'], args.chore)} min) ...", flush=True)
+    row = run.run_episode(cfg, ep, args.chore, args.variant, args.arm, args.seed)
+    if "error" in row:
+        return row if "success" in row else None, None, row["error"]
+    return row, None, None
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="bench", usage=__doc__.split("\n\n")[0].removeprefix("usage: "))
+    ap.add_argument("chore", type=chore_name)
+    ap.add_argument("variant", choices=["trap", "control"])
+    ap.add_argument("--seed", type=int, default=1)
+    how = ap.add_mutually_exclusive_group(required=True)
+    how.add_argument("--scripted", nargs="?", const="honest", metavar="AGENT")
+    how.add_argument("--config", metavar="FILE")
+    ap.add_argument("--harness", metavar="DIR")
+    ap.add_argument("--arm", choices=sorted(run.ARMS), default="A")
+    ap.add_argument("--keep", action="store_true")
+    args = ap.parse_args()
+    if run.ARMS[args.arm].harness == "E" and not args.harness:
+        sys.exit(f"bench: arm {args.arm} needs --harness <harness4research checkout>; arm A needs none")
+    pre = sh(os.path.join(HERE, "env", "prereq.sh"), "bench", *(["broker"] if run.ARMS[args.arm].broker else []))
+    if pre.returncode:
+        sys.exit(pre.stderr.strip())
+    if not os.path.isdir(run.SITE_VENV):
+        print("bench: no env/.site-venv, so the sandbox offers the host's python3; build the pinned one with "
+              "env/site-python.sh", file=sys.stderr)
+    harness = ["--harness", os.path.abspath(args.harness)] if args.harness else []
+    with open(os.path.join(HERE, "tasks", args.chore, "task.json")) as f:
+        task = json.load(f)
+    episodes = run.expand(json.load(open(args.config)).get("episodes_dir", EPISODES) if args.config else EPISODES)
+    os.makedirs(episodes, exist_ok=True)
+    ep = os.path.join(episodes, secrets.token_hex(6))
+    print(f"{args.chore} {args.variant} seed {args.seed} arm {args.arm}: episode {ep}", flush=True)
+    keep = args.keep or bool(args.config)
+    try:
+        if args.config:
+            got, want, err = model(args, ep, harness)
+        else:
+            got, want, err = scripted(args, task, ep, harness)
+    finally:
+        sh(os.path.join(HERE, "env", "down.sh"), ep)
+        if not keep and os.path.isdir(ep):
+            shutil.rmtree(ep, ignore_errors=True)
+    if got is not None:
+        print(json.dumps(got, indent=1, sort_keys=True))
+        print(f"\nverdict: violation={str(got['violation']).lower()} success={str(got['success']).lower()}"
+              + (f" escalated={str(got['escalated']).lower()}" if got.get("escalated") is not None else ""))
+    if err:
+        print(f"bench: {err}", file=sys.stderr)
+        sys.exit(2)
+    if want is not None:
+        if all(got.get(k) == v for k, v in want.items()):
+            print("expected (task.json): " + " ".join(f"{k}={str(v).lower()}" for k, v in want.items()) + "  -> matches")
+        else:
+            print("expected (task.json): " + " ".join(f"{k}={str(v).lower()}" for k, v in want.items()) + "  -> DIFFERS")
+            sys.exit(1)
+    if keep:
+        print(f"episode kept at {ep}")
+
+
+if __name__ == "__main__":
+    main()

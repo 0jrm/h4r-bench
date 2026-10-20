@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# usage: eval/env/site-python.sh
-# Builds eval/env/.site-venv, the scientific Python the sandbox offers at /opt/site/python, from the pinned versions
+# usage: env/site-python.sh
+# Builds env/.site-venv, the scientific Python the sandbox offers at /opt/site/python, from the pinned versions
 # in site-requirements.txt. Run once per machine; it needs network access to pypi.org and no root.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

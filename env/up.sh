@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: eval/env/up.sh <episode_dir> --project <dir> [--harness <harness_repo>] [--cluster <cluster.json>] [--broker]
+# usage: env/up.sh <episode_dir> --project <dir> [--harness <harness_repo>] [--cluster <cluster.json>] [--broker]
 # Builds one episode and starts its services. Needs bash, git, python3 and bubblewrap; never root.
 #
 #   <episode_dir>/home/            the agent's HOME, /home/agent inside; the project is cloned at ~/<project name>
@@ -38,6 +38,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$project" ] || usage
+# The broker is the harness's (eval/broker/ and lib/broker/ of a harness4research checkout), so --broker needs --harness.
+[ $broker = 0 ] || [ -n "$harness" ] || { echo "up.sh: --broker needs --harness <harness4research checkout>" >&2; exit 64; }
 [ ! -e "$ep" ] || { echo "up.sh: $ep exists; every episode starts from an empty directory" >&2; exit 2; }
 command -v bwrap >/dev/null || { echo "up.sh: bubblewrap (bwrap) is not installed" >&2; exit 2; }
 mkdir -p "$ep"/{home,hidden,state/slurm,state/git,sandbox/etc,sandbox/tools/bin,sandbox/tools/lib}
@@ -50,10 +52,9 @@ printf 'agent:x:%s:\n' "$(id -g)" > "$ep/sandbox/etc/group"
 cp "$here/slurmclient.py" "$here/forge_connect.py" "$here/jobwrap.sh" "$ep/sandbox/tools/lib/"
 client=/opt/site/lib/slurmclient.py
 if [ $broker = 1 ]; then
-  # Behind the broker the stand-ins are the harness's lib/broker/client.py (a copy where the arm has no harness), so
-  # its sbatch prints R09 from the harness's own refusal table.
-  cp "$here/../../lib/broker/client.py" "$ep/sandbox/tools/lib/"; client=/opt/site/lib/client.py
-  [ -z "$harness" ] || client=/opt/harness4research/lib/broker/client.py
+  # Behind the broker the stand-ins are the harness's lib/broker/client.py, so its sbatch prints R09 from the
+  # harness's own refusal table.
+  client=/opt/harness4research/lib/broker/client.py
   mkdir -p "$ep/state/broker/bin" "$ep/state/broker/sock"
   for c in sbatch squeue sacct scancel; do ln -s "$here/slurmclient.py" "$ep/state/broker/bin/$c"; done
 fi
@@ -90,7 +91,7 @@ rm -rf "$seed"
 if [ $broker = 1 ]; then
   mkdir -p "$ep/state/owner"
   ssh-keygen -q -t ed25519 -N "" -C owner -f "$ep/state/owner/key"
-  python3 "$here/../broker/broker.py" setup "$ep/state/broker" > /dev/null
+  python3 "$harness/eval/broker/broker.py" setup "$ep/state/broker" > /dev/null
   for who in owner broker; do
     printf '%s namespaces="git" %s\n' "$who" "$(cut -d' ' -f1,2 "$ep/state/$who/key.pub")"
   done > "$ep/state/git/allowed_signers"
@@ -157,7 +158,7 @@ FORGE_LOG=$ep/state/git/forge.log nohup setsid python3 "$here/gitsock.py" serve 
 echo $! > "$ep/state/git/pid"
 socks=("$ep/state/slurm/slurmctld.sock" "$ep/state/git/forge.sock")
 if [ $broker = 1 ]; then
-  nohup setsid python3 "$here/../broker/broker.py" serve "$ep/state/broker" "$ep/state/broker/config.json" \
+  nohup setsid python3 "$harness/eval/broker/broker.py" serve "$ep/state/broker" "$ep/state/broker/config.json" \
     > "$ep/state/broker/daemon.log" 2>&1 &
   echo $! > "$ep/state/broker/pid"
   socks+=("$ep/state/broker/sock/scheduler.sock" "$ep/state/broker/sock/records.sock" "$ep/state/broker/sock/gh.sock")

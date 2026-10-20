@@ -154,7 +154,7 @@ args+=(
   "${binds[@]}"
   --ro-bind "$here/box_inside.sh" /run/box/inside.sh
   --ro-bind "$here/box_probe.py" /run/box/probe.py
-  --ro-bind "$here/../eval/driver/netrelay.py" /run/box/netrelay.py
+  --ro-bind "$here/../driver/netrelay.py" /run/box/netrelay.py
   --clearenv
   --setenv HOME "$home" --setenv USER "$user" --setenv LOGNAME "$user"
   --setenv LANG C.UTF-8 --setenv TERM "${TERM:-xterm}"
