@@ -1,0 +1,15 @@
+cff-version: 1.2.0
+message: "If you use h4r-bench, please cite it as below."
+title: "h4r-bench"
+version: 0.1.0
+date-released: 2026-10-20
+license: MIT
+type: software
+authors:
+  - family-names: Miranda
+    given-names: Jose
+    affiliation: Florida State University
+abstract: >-
+  Three research chores, each with a trap version and a control version, and scripted scorers, for measuring
+  whether an AI coding agent breaks a project's rules to finish a chore, in a sandbox that stands in for a
+  cluster login node.
